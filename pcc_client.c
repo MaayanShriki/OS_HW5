@@ -1,3 +1,4 @@
+#include <signal.h>
 #include <sys/socket.h>
 #include <sys/types.h>
 #include <netinet/in.h>
@@ -9,6 +10,13 @@
 #include <arpa/inet.h>
 #include <errno.h>
 #include <sys/stat.h>
+
+#define READ 'r'
+#define WRITE 'w'
+#define W_ERR_MSG "Couldn't write message"
+#define R_ERR_MSG "Couldn't read message"
+
+int sock_fd = -1;
 
 unsigned int numOfBytes(char *filename) {
     struct stat sb;
@@ -36,12 +44,22 @@ char *FileToBuffer(char *filename, unsigned int N) {
     return buffer;
 }
 
-int main(int argc, char *argv[]) {
-    int sock_fd = -1;
-    uint32_t N, buf_N;
-    char *buffer, buf_len[4];
-    ssize_t total_wr, bytes_wr = 0;
+void wr(char wr, char *buffer, uint32_t max_bytes, char *err_msg){
+    ssize_t total_wr = 0, bytes_wr = 0;
+    while (total_wr < max_bytes) {
+        if (wr == WRITE) bytes_wr = write(sock_fd, buffer + total_wr, max_bytes - total_wr);
+        if (wr == READ) bytes_wr = read(sock_fd, buffer + total_wr, max_bytes - total_wr);
+        if (bytes_wr < 0){
+            perror(err_msg);
+            exit(EXIT_FAILURE);
+        }
+        total_wr += bytes_wr;
+    }
+}
 
+int main(int argc, char *argv[]) {
+    uint32_t N, buf_N;
+    char *buffer;
     struct sockaddr_in server;
 
     if (argc != 4) {
@@ -65,43 +83,13 @@ int main(int argc, char *argv[]) {
         exit(EXIT_FAILURE);
     }
 
-    buf_N = htons(N);
-    buf_len[0] = (char) (buf_N & 0xff);
-    buf_len[1] = (char) ((buf_N>>8)  & 0xff);
-    buf_len[2] = (char) ((buf_N>>16) & 0xff);
-    buf_len[3] = (char) ((buf_N>>24) & 0xff);
+    buf_N = htonl(N);
 
-    total_wr = 0;
-    while (total_wr < 4) {
-        bytes_wr = write(sock_fd, &buf_len[total_wr], 4 - total_wr);
-        if (bytes_wr < 0){
-            perror("Couldn't write message");
-            exit(EXIT_FAILURE);
-        }
-        total_wr += bytes_wr;
-    }
+    wr(WRITE, (char *) &buf_N, 4, W_ERR_MSG);
+    wr(WRITE, buffer, N, W_ERR_MSG);
+    wr(READ, (char *) &buf_N, 4, R_ERR_MSG);
 
-    total_wr = 0;
-    while (total_wr < N){
-        bytes_wr = write(sock_fd, &buffer[total_wr], N - total_wr);
-        if (bytes_wr < 0){
-            perror("Couldn't read message");
-            exit(EXIT_FAILURE);
-        }
-        total_wr += bytes_wr;
-    }
-
-    total_wr = 0;
-    while (total_wr < 4) {
-        bytes_wr = read(sock_fd, &buf_len[total_wr], 4 - total_wr);
-        if (bytes_wr < 0){
-            perror("Couldn't read message");
-            exit(EXIT_FAILURE);
-        }
-        total_wr += bytes_wr;
-    }
-
-    close(sock_fd); // is socket really done here?
-    printf("# of printable characters: %u\n", ntohl(atoi(buf_len)));
+    close(sock_fd);
+    printf("# of printable characters: %u\n", ntohl(buf_N));
     return 0;
 }
